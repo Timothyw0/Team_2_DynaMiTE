@@ -1,0 +1,169 @@
+/**
+   Team 2 DynaMiTE
+
+   Revisions:
+   7/15/2017 - Timothy Wang
+   7/27/2017 - Brian Higgins
+   Initial version
+
+*/
+#include <Arduino.h>
+#include <MeMegaPi.h>
+#include "MeEEPROM.h"
+#include <Wire.h>
+#include <SoftwareSerial.h>
+
+// Set movement speeds
+int16_t rotationAngle = 360;
+int16_t mSpeed = 100;
+int16_t mSpeedDiff = 20;
+int16_t mSpeedTurnMod = 3;
+int16_t mSpeedLow = mSpeed - mSpeedDiff;
+int16_t w1Speed = 1.15 * mSpeed;
+int16_t w1SpeedLow = 1.15 * mSpeedLow;
+int16_t w2Speed = mSpeed;
+int16_t w2SpeedLow = mSpeedLow;
+// Count iterations of movement
+int currentIteration = 0;
+// Array to keep track of movements that is sent to GUI
+char* movements = new char[30];
+// Array to keep track of distances from the wall sent to GUI
+int* distances = new int[30];
+
+// Encoders for tread/wheel motors
+MeMegaPiDCMotor wheel1(PORT1B);
+MeMegaPiDCMotor wheel2(PORT2B);
+// Encoders for radar sweep motor
+MeMegaPiDCMotor radarMotor(PORT3B);
+// Line Sensor intialization
+MeLineFollower lineSensor(PORT_7);
+// Ultrasonic Sensor initialization
+MeUltrasonicSensor distanceSensor(PORT_6);
+
+/**
+ * Stop the motors to reset movement
+ */
+void moveStop() {
+  wheel1.stop();
+  wheel2.stop();
+}
+
+/**
+ * Move both wheels at the same speed to move
+ * forward
+ */
+void moveForward() {
+//  wheel1.moveTo(rotationAngle, 200);
+//  wheel2.moveTo(rotationAngle, 200);
+  moveStop();
+  wheel1.run(w1Speed);
+  wheel2.run(-w2Speed);
+}
+
+/**
+ * Left wheel turns backward slower and right wheel
+ * goes forward to move left
+ */
+void moveLeft() {
+//  wheel1.moveTo(-rotationAngle / 2, 200);
+//  wheel2.moveTo(rotationAngle, 200);
+  moveStop();
+  wheel1.run(-(w1SpeedLow) / 2);
+  wheel2.run(-(w2Speed) / 2);
+}
+
+/**
+ * Right wheel turns backward slower and left wheel
+ * goes forward to move right
+ */
+void moveRight() {
+//  wheel1.moveTo(rotationAngle, 200);
+//  wheel2.moveTo(-rotationAngle / 2, 200);
+  moveStop();
+  wheel1.run((w1Speed) / 2);
+  wheel2.run((w2SpeedLow) / 2);
+}
+
+/**
+ * Search for the line by going in a zig zag pattern 
+ * that gets progressively larger until line is found
+ */
+void searchForLine() {
+  // Radius that will get progressively larger
+  int radius = 1;
+  // Search for line until at least one sensor see it
+  while (lineSensor.readSensors() == S1_OUT_S2_OUT) {
+    // Move left "radius" amount of times
+    for (int i = 0; i < radius; ++i) {
+      moveLeft();
+      delay(i*50);
+      // Check if line has been found already
+      if (lineSensor.readSensors() != S1_OUT_S2_OUT) return;
+    }
+    for (int i = 0; i < radius; ++i) {
+      moveRight();
+      delay(i*50*2.5);
+      // Check if line has been found already
+      if (lineSensor.readSensors() != S1_OUT_S2_OUT) return;
+    }
+    for (int i = 0; i < radius; ++i) {
+      moveLeft();
+      delay(i*50);
+      // Check if line has been found already
+      if (lineSensor.readSensors() != S1_OUT_S2_OUT) return;
+    }
+    radius++;
+  }
+}
+
+/**
+ * Sweep the radar along x amount of degrees and get the 
+ * distance after each rotation of the motor to be sent
+ * to GUI
+ */
+void radarSweep(int* dist) {
+  // Sweep the radar by moving motor
+  for (int i = 0; i < 10; ++i) { // Assuming 10 stops along the rotation to get distance, 18 deg each
+//    radarMotor.moveTo(18, 200); // To be changed later
+    dist[i] = distanceSensor.distanceCm();
+  }
+}
+
+ 
+void setup() {
+  Serial.begin(9600);
+}
+
+void loop() {
+  // Code to follow the line
+  int sensorState = lineSensor.readSensors();
+  // Both sensors are on the line, move forward
+  if (sensorState == S1_IN_S2_IN) {
+    moveForward();
+    movements[currentIteration] = 'F';
+  }
+  // Only the left sensor sees the line, move left
+  else if (sensorState == S1_IN_S2_OUT) {
+    moveLeft();
+    movements[currentIteration] = 'L';
+  }
+  // Only the right sensor sees the line, move right
+  else if (sensorState == S1_OUT_S2_IN) {
+    moveRight();
+    movements[currentIteration] = 'R';
+  }
+  // No sensors see the line, start searching
+  else {
+    searchForLine();
+    movements[currentIteration] = 'N';
+  }
+  currentIteration++;
+  // Send movements to GUI if all 30 entries are filled
+  if (currentIteration == 30) {
+    // Send to GUI
+    currentIteration = 0;
+    // Sweep radar? Maybe
+    radarSweep(distances);
+    // Send to GUI
+  }  
+}
